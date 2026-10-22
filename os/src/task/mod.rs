@@ -17,6 +17,8 @@ mod task;
 use crate::config::MAX_APP_NUM;
 use crate::loader::{get_num_app, init_app_cx};
 use crate::sync::UPSafeCell;
+use alloc::collections::BTreeMap;
+use core::array;
 use lazy_static::*;
 use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
@@ -51,10 +53,11 @@ lazy_static! {
     /// Global variable: TASK_MANAGER
     pub static ref TASK_MANAGER: TaskManager = {
         let num_app = get_num_app();
-        let mut tasks = [TaskControlBlock {
+        let mut tasks: [TaskControlBlock; MAX_APP_NUM] = array::from_fn(|_| TaskControlBlock{
             task_cx: TaskContext::zero_init(),
             task_status: TaskStatus::UnInit,
-        }; MAX_APP_NUM];
+            syscall_count: BTreeMap::new()
+        });
         for (i, task) in tasks.iter_mut().enumerate() {
             task.task_cx = TaskContext::goto_restore(init_app_cx(i));
             task.task_status = TaskStatus::Ready;
@@ -135,6 +138,28 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+
+    /// 修改当前任务的 TCB 增加对应 syscall 调用次数
+    fn add_current_syscall_count(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current]
+            .syscall_count
+            .entry(syscall_id)
+            .and_modify(|e| *e += 1)
+            .or_insert(1);
+    }
+
+    /// 查询当前任务的 syscall 调用次数
+    fn get_current_syscall_count(&self, syscall_id: usize) -> isize {
+        let inner = self.inner.shared_access();
+        let current = inner.current_task;
+        inner.tasks[current]
+            .syscall_count
+            .get(&syscall_id)
+            .unwrap_or(&0)
+            .clone()
+    }
 }
 
 /// Run the first task in task list.
@@ -168,4 +193,14 @@ pub fn suspend_current_and_run_next() {
 pub fn exit_current_and_run_next() {
     mark_current_exited();
     run_next_task();
+}
+
+/// 修改当前任务的 TCB 增加对应 syscall 调用次数
+pub fn add_current_syscall_count(syscall_id: usize) {
+    TASK_MANAGER.add_current_syscall_count(syscall_id);
+}
+
+/// 查询当前任务特定 syscall 的调用次数
+pub fn get_current_syscall_count(syscall_id: usize) -> isize {
+    TASK_MANAGER.get_current_syscall_count(syscall_id)
 }
