@@ -153,6 +153,28 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+
+    /// 修改当前任务的 TCB 增加对应 syscall 调用次数
+    fn add_current_syscall_count(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current]
+            .syscall_count
+            .entry(syscall_id)
+            .and_modify(|e| *e += 1)
+            .or_insert(1);
+    }
+
+    /// 查询当前任务的 syscall 调用次数
+    fn get_current_syscall_count(&self, syscall_id: usize) -> isize {
+        let inner = self.inner.shared_access();
+        let current = inner.current_task;
+        inner.tasks[current]
+            .syscall_count
+            .get(&syscall_id)
+            .unwrap_or(&0)
+            .clone()
+    }
 }
 
 /// Run the first task in task list.
@@ -201,4 +223,14 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// 修改当前任务的 TCB 增加对应 syscall 调用次数
+pub fn add_current_syscall_count(syscall_id: usize) {
+    TASK_MANAGER.add_current_syscall_count(syscall_id);
+}
+
+/// 查询当前任务特定 syscall 的调用次数
+pub fn get_current_syscall_count(syscall_id: usize) -> isize {
+    TASK_MANAGER.get_current_syscall_count(syscall_id)
 }

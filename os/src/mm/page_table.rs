@@ -179,3 +179,53 @@ pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&
     }
     v
 }
+
+/// Safe version of `translated_byte_buffer`
+pub fn translated_byte_buffer_safe(
+    token: usize,
+    ptr: *const u8,
+    len: usize,
+    write: bool,
+) -> Option<Vec<&'static mut [u8]>> {
+    // 用户态只能访问低半区
+    const USER_VA_END: usize = 1 << 38;
+
+    let mut start = ptr as usize;
+    // 检查是否上溢
+    let end = start.checked_add(len)?;
+    if end > USER_VA_END {
+        return None;
+    }
+
+    let page_table = PageTable::from_token(token);
+    let mut v = Vec::new();
+    while start < end {
+        let start_va = VirtAddr::from(start);
+        let mut vpn = start_va.floor();
+        let pte = page_table.translate(vpn)?;
+        // 检查 pte 是否有效且符合权限
+        if !pte.is_valid() {
+            return None;
+        };
+        if write {
+            if !pte.writable() {
+                return None;
+            }
+        } else {
+            if !pte.readable() {
+                return None;
+            }
+        }
+        let ppn = pte.ppn();
+        vpn.step();
+        let mut end_va: VirtAddr = vpn.into();
+        end_va = end_va.min(VirtAddr::from(end));
+        if end_va.page_offset() == 0 {
+            v.push(&mut ppn.get_bytes_array()[start_va.page_offset()..]);
+        } else {
+            v.push(&mut ppn.get_bytes_array()[start_va.page_offset()..end_va.page_offset()]);
+        }
+        start = end_va.into();
+    }
+    Some(v)
+}
