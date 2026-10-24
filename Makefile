@@ -1,5 +1,10 @@
 CONTAINER_NAME ?= rcore-container-qemu8
 DOCKER_NAME ?= rcore-docker-qemu8
+
+# Host user's UID/GID, synced into the container to avoid permission issues
+UID := $(shell id -u)
+GID := $(shell id -g)
+
 .PHONY: docker build_docker attach_docker rebuild_docker fmt
 
 docker:
@@ -20,6 +25,7 @@ docker:
 		echo "🚀 no existing container is found: ${CONTAINER_NAME}，start creating new container..."; \
 		docker run --network host -it -d \
 			--name ${CONTAINER_NAME} \
+			--user $(UID):$(GID) \
 			-v ${CURDIR}:/mnt \
 			-w /mnt \
 			${DOCKER_NAME} \
@@ -29,7 +35,10 @@ docker:
 
 # build docker if container doesn't exist
 build_docker:
-	docker build -t ${DOCKER_NAME} .
+	docker build \
+		--build-arg USER_ID=$(UID) \
+		--build-arg GROUP_ID=$(GID) \
+		-t ${DOCKER_NAME} .
 
 attach_docker:
 	@if docker ps -a --filter "name=^/${CONTAINER_NAME}$$" --format "{{.Names}}" | grep -q "${CONTAINER_NAME}"; then \
@@ -44,9 +53,12 @@ attach_docker:
 rebuild_docker:
 	@echo "🗑️ delete existing container ${CONTAINER_NAME}..."; \
 	docker rm -f ${CONTAINER_NAME} 2>/dev/null; \
+	echo "🔨 rebuilding image with UID=$(UID) GID=$(GID)..."; \
+	make build_docker; \
 	echo "🚀 start creating container..."; \
 	docker run --network host -it -d \
 		--name ${CONTAINER_NAME} \
+		--user $(UID):$(GID) \
 		-v ${CURDIR}:/mnt \
 		-w /mnt \
 		${DOCKER_NAME} \
