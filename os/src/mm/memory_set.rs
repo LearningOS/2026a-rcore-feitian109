@@ -72,23 +72,55 @@ impl MemorySet {
         end_va: VirtAddr,
         permission: MapPermission,
     ) -> bool {
-        let start_vpn = start_va.floor();
-        let end_vpn = end_va.ceil();
+        let request_range = VPNRange::new(start_va.floor(), end_va.ceil());
 
         // 检查是否与已有 area 重叠
         for area in &self.areas {
-            let range = area.vpn_range;
-            if range.get_start() <= end_vpn && start_vpn <= range.get_end() {
+            if request_range.overlap(&area.vpn_range).is_some() {
                 return false;
             }
         }
-
         // 检查物理内存是否足够
-        if end_vpn.0 - start_vpn.0 > remaining_frames() {
+        if request_range.len() > remaining_frames() {
             return false;
         }
 
         self.insert_framed_area(start_va, end_va, permission);
+        true
+    }
+    /// 取消用户映射的 area
+    pub fn delete_framed_user_area(&mut self, start_va: VirtAddr, end_va: VirtAddr) -> bool {
+        let delete_range = VPNRange::new(start_va.floor(), end_va.ceil());
+
+        // 检查每一页是否都有映射，且权限为 U
+        for vpn in delete_range {
+            let covered = self.areas.iter().any(|area| {
+                area.map_perm.contains(MapPermission::U) && area.vpn_range.contains(vpn)
+            });
+            if !covered {
+                return false;
+            }
+        }
+
+        let mut new_areas = Vec::new();
+        for mut area in self.areas.drain(..) {
+            let overlap = if area.map_perm.contains(MapPermission::U) {
+                delete_range.overlap(&area.vpn_range)
+            } else {
+                None
+            };
+
+            match overlap {
+                None => new_areas.push(area),
+                Some(overlap) => {
+                    for vpn in overlap {
+                        area.unmap_one(&mut self.page_table, vpn);
+                    }
+                    new_areas.extend(area.split_contiguous())
+                }
+            }
+        }
+        self.areas = new_areas;
         true
     }
     fn push(&mut self, mut map_area: MapArea, data: Option<&[u8]>) {
@@ -383,6 +415,40 @@ impl MapArea {
             }
             current_vpn.step();
         }
+    }
+    /// 依据 data_frames 中的空洞拆分成若干新的合法 area
+    /// 保证原有帧不被回收，当 data_frames 为空时返回空
+    pub fn split_contiguous(self) -> Vec<Self> {
+        let mut result = Vec::new();
+        let mut start = None;
+        let mut last = VirtPageNum(0);
+        let mut frames = BTreeMap::new();
+
+        for (vpn, frame) in self.data_frames.into_iter() {
+            if start.is_some() && vpn.0 != last.0 + 1 {
+                result.push(MapArea {
+                    vpn_range: VPNRange::new(start.unwrap(), VirtPageNum(last.0 + 1)),
+                    data_frames: core::mem::take(&mut frames),
+                    map_type: self.map_type,
+                    map_perm: self.map_perm,
+                });
+                start = None;
+            }
+            if start.is_none() {
+                start = Some(vpn);
+            }
+            last = vpn;
+            frames.insert(vpn, frame);
+        }
+        if let Some(rs) = start {
+            result.push(MapArea {
+                vpn_range: VPNRange::new(rs, VirtPageNum(last.0 + 1)),
+                data_frames: frames,
+                map_type: self.map_type,
+                map_perm: self.map_perm,
+            })
+        }
+        result
     }
 }
 

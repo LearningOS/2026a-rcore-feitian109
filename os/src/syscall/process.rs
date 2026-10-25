@@ -3,7 +3,7 @@ use crate::config::PAGE_SIZE;
 use crate::mm::{translated_byte_buffer_safe, MapPermission};
 use crate::task::{
     change_program_brk, current_user_token, exit_current_and_run_next, get_current_syscall_count,
-    mmap_current, suspend_current_and_run_next,
+    mmap_current, munmap_current, suspend_current_and_run_next,
 };
 use crate::timer::get_time_us;
 
@@ -112,9 +112,18 @@ pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
 
 // YOUR JOB: Implement munmap.
 pub fn sys_munmap(_start: usize, _len: usize) -> isize {
-    trace!("kernel: sys_munmap NOT IMPLEMENTED YET!");
-    -1
+    trace!("kernel: sys_munmap");
+    // _start 必须按页对齐
+    if _start % PAGE_SIZE != 0 {
+        return -1;
+    }
+
+    if !munmap_current(_start, _len) {
+        return -1;
+    }
+    0
 }
+
 /// change data segment size
 pub fn sys_sbrk(size: i32) -> isize {
     trace!("kernel: sys_sbrk");

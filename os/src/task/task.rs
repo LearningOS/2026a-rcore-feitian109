@@ -106,6 +106,11 @@ impl TaskControlBlock {
         self.memory_set
             .insert_framed_area_safe(start.into(), (start + len).into(), perm)
     }
+    /// 取消映射失败则返回 false
+    pub fn munmap(&mut self, start: usize, len: usize) -> bool {
+        self.memory_set
+            .delete_framed_user_area(start.into(), (start + len).into())
+    }
 }
 
 #[derive(Copy, Clone, PartialEq)]

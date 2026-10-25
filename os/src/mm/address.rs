@@ -1,6 +1,7 @@
 //! Implementation of physical and virtual address and page number.
 use super::PageTableEntry;
 use crate::config::{PAGE_SIZE, PAGE_SIZE_BITS};
+use core::cmp::{max, min};
 use core::fmt::{self, Debug, Formatter};
 /// physical address
 const PA_WIDTH_SV39: usize = 56;
@@ -227,6 +228,9 @@ where
     pub fn get_end(&self) -> T {
         self.r
     }
+    pub fn contains(&self, other: T) -> bool {
+        other >= self.l && other < self.r
+    }
 }
 impl<T> IntoIterator for SimpleRange<T>
 where
@@ -271,3 +275,20 @@ where
 }
 /// a simple range structure for virtual page number
 pub type VPNRange = SimpleRange<VirtPageNum>;
+impl VPNRange {
+    /// Return overlap range of VPNRange
+    pub fn overlap(&self, other: &Self) -> Option<Self> {
+        let l = max(self.l, other.l);
+        let r = min(self.r, other.r);
+
+        if l < r {
+            Some(Self::new(l, r))
+        } else {
+            None
+        }
+    }
+    /// Return length of VPNRange
+    pub fn len(&self) -> usize {
+        self.r.0 - self.l.0
+    }
+}

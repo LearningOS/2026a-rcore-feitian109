@@ -182,6 +182,12 @@ impl TaskManager {
         let current = inner.current_task;
         inner.tasks[current].mmap(start, len, perm)
     }
+    /// 取消当前任务的内存映射，出错则返回 false
+    fn munmap_current(&self, start: usize, len: usize) -> bool {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].munmap(start, len)
+    }
 }
 
 /// Run the first task in task list.
@@ -245,4 +251,9 @@ pub fn get_current_syscall_count(syscall_id: usize) -> isize {
 /// 给当前任务映射虚拟内存，出错则返回 false
 pub fn mmap_current(start: usize, len: usize, perm: MapPermission) -> bool {
     TASK_MANAGER.mmap_current(start, len, perm)
+}
+
+/// 取消映射虚拟内存，出错则返回 false
+pub fn munmap_current(start: usize, len: usize) -> bool {
+    TASK_MANAGER.munmap_current(start, len)
 }
