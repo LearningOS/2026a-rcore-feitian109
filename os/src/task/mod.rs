@@ -15,6 +15,7 @@ mod switch;
 mod task;
 
 use crate::loader::{get_app_data, get_num_app};
+use crate::mm::MapPermission;
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
 use alloc::vec::Vec;
@@ -175,6 +176,12 @@ impl TaskManager {
             .unwrap_or(&0)
             .clone()
     }
+    /// 给当前任务映射虚拟内存，出错则返回 false
+    fn mmap_current(&self, start: usize, len: usize, perm: MapPermission) -> bool {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].mmap(start, len, perm)
+    }
 }
 
 /// Run the first task in task list.
@@ -233,4 +240,9 @@ pub fn add_current_syscall_count(syscall_id: usize) {
 /// 查询当前任务特定 syscall 的调用次数
 pub fn get_current_syscall_count(syscall_id: usize) -> isize {
     TASK_MANAGER.get_current_syscall_count(syscall_id)
+}
+
+/// 给当前任务映射虚拟内存，出错则返回 false
+pub fn mmap_current(start: usize, len: usize, perm: MapPermission) -> bool {
+    TASK_MANAGER.mmap_current(start, len, perm)
 }

@@ -1,8 +1,9 @@
 //! Process management syscalls
-use crate::mm::translated_byte_buffer_safe;
+use crate::config::PAGE_SIZE;
+use crate::mm::{translated_byte_buffer_safe, MapPermission};
 use crate::task::{
     change_program_brk, current_user_token, exit_current_and_run_next, get_current_syscall_count,
-    suspend_current_and_run_next,
+    mmap_current, suspend_current_and_run_next,
 };
 use crate::timer::get_time_us;
 
@@ -83,8 +84,30 @@ pub fn sys_trace(_trace_request: usize, _id: usize, _data: usize) -> isize {
 
 // YOUR JOB: Implement mmap.
 pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
-    trace!("kernel: sys_mmap NOT IMPLEMENTED YET!");
-    -1
+    trace!("kernel: sys_mmap");
+
+    // 检查 _start 是否按页对齐，且 port 是否合法
+    if _start % PAGE_SIZE != 0 || !(1..=0x7).contains(&_port) {
+        return -1;
+    }
+
+    // _port 权限转换为内存权限
+    let mut perm = MapPermission::U;
+    if _port & 0b1 != 0 {
+        perm |= MapPermission::R;
+    }
+    if _port & 0b10 != 0 {
+        perm |= MapPermission::W;
+    }
+    if _port & 0b100 != 0 {
+        perm |= MapPermission::X;
+    }
+
+    if !mmap_current(_start, _len, perm) {
+        return -1;
+    }
+
+    0
 }
 
 // YOUR JOB: Implement munmap.

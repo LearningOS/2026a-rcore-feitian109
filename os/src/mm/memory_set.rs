@@ -7,6 +7,7 @@ use super::{StepByOne, VPNRange};
 use crate::config::{
     KERNEL_STACK_SIZE, MEMORY_END, PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT_BASE, USER_STACK_SIZE,
 };
+use crate::mm::remaining_frames;
 use crate::sync::UPSafeCell;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
@@ -62,6 +63,33 @@ impl MemorySet {
             MapArea::new(start_va, end_va, MapType::Framed, permission),
             None,
         );
+    }
+    /// Safe version of `inserted_framed_area`，检测是否产生冲突
+    /// 检查物理内存是否足够，暂时设计为返回 bool，使用 Result 更好
+    pub fn insert_framed_area_safe(
+        &mut self,
+        start_va: VirtAddr,
+        end_va: VirtAddr,
+        permission: MapPermission,
+    ) -> bool {
+        let start_vpn = start_va.floor();
+        let end_vpn = end_va.ceil();
+
+        // 检查是否与已有 area 重叠
+        for area in &self.areas {
+            let range = area.vpn_range;
+            if range.get_start() <= end_vpn && start_vpn <= range.get_end() {
+                return false;
+            }
+        }
+
+        // 检查物理内存是否足够
+        if end_vpn.0 - start_vpn.0 > remaining_frames() {
+            return false;
+        }
+
+        self.insert_framed_area(start_va, end_va, permission);
+        true
     }
     fn push(&mut self, mut map_area: MapArea, data: Option<&[u8]>) {
         map_area.map(&mut self.page_table);

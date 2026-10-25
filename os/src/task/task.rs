@@ -101,6 +101,11 @@ impl TaskControlBlock {
             None
         }
     }
+    /// 映射失败则返回 false
+    pub fn mmap(&mut self, start: usize, len: usize, perm: MapPermission) -> bool {
+        self.memory_set
+            .insert_framed_area_safe(start.into(), (start + len).into(), perm)
+    }
 }
 
 #[derive(Copy, Clone, PartialEq)]
