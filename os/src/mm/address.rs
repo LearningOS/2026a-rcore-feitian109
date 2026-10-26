@@ -8,6 +8,7 @@ const PA_WIDTH_SV39: usize = 56;
 const VA_WIDTH_SV39: usize = 39;
 const PPN_WIDTH_SV39: usize = PA_WIDTH_SV39 - PAGE_SIZE_BITS;
 const VPN_WIDTH_SV39: usize = VA_WIDTH_SV39 - PAGE_SIZE_BITS;
+const USER_WIDTH_SV39: usize = 38;
 
 /// physical address
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
@@ -291,4 +292,13 @@ impl VPNRange {
     pub fn len(&self) -> usize {
         self.r.0 - self.l.0
     }
+}
+/// 检查 [start, start + len] 是否位于低半区，并且防止上溢
+pub fn checked_user_va_range(start: usize, len: usize) -> Option<(VirtAddr, VirtAddr)> {
+    let user_va_end = 1 << USER_WIDTH_SV39;
+    let end = start.checked_add(len)?;
+    if start >= user_va_end || end > user_va_end {
+        return None;
+    }
+    Some((VirtAddr(start), VirtAddr(end)))
 }

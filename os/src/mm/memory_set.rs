@@ -73,7 +73,6 @@ impl MemorySet {
         permission: MapPermission,
     ) -> bool {
         let request_range = VPNRange::new(start_va.floor(), end_va.ceil());
-
         // 检查是否与已有 area 重叠
         for area in &self.areas {
             if request_range.overlap(&area.vpn_range).is_some() {
@@ -81,17 +80,16 @@ impl MemorySet {
             }
         }
         // 检查物理内存是否足够
+        // FIXME: 注意页表也会占用剩余页，只有修改 MapArea.map_one 才能完全保证安全
         if request_range.len() > remaining_frames() {
             return false;
         }
-
         self.insert_framed_area(start_va, end_va, permission);
         true
     }
     /// 取消用户映射的 area
     pub fn delete_framed_user_area(&mut self, start_va: VirtAddr, end_va: VirtAddr) -> bool {
         let delete_range = VPNRange::new(start_va.floor(), end_va.ceil());
-
         // 检查每一页是否都有映射，且权限为 U
         for vpn in delete_range {
             let covered = self.areas.iter().any(|area| {
@@ -109,7 +107,6 @@ impl MemorySet {
             } else {
                 None
             };
-
             match overlap {
                 None => new_areas.push(area),
                 Some(overlap) => {

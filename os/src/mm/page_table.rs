@@ -1,6 +1,7 @@
 //! Implementation of [`PageTableEntry`] and [`PageTable`].
 
 use super::{frame_alloc, FrameTracker, PhysPageNum, StepByOne, VirtAddr, VirtPageNum};
+use crate::mm::checked_user_va_range;
 use alloc::vec;
 use alloc::vec::Vec;
 use bitflags::*;
@@ -69,6 +70,10 @@ impl PageTableEntry {
     /// The page pointered by page table entry is executable?
     pub fn executable(&self) -> bool {
         (self.flags() & PTEFlags::X) != PTEFlags::empty()
+    }
+    /// The page pointed by page table entry is user accessible?
+    pub fn user_accessible(&self) -> bool {
+        (self.flags() & PTEFlags::U) != PTEFlags::empty()
     }
 }
 
@@ -187,45 +192,31 @@ pub fn translated_byte_buffer_safe(
     len: usize,
     write: bool,
 ) -> Option<Vec<&'static mut [u8]>> {
-    // 用户态只能访问低半区
-    const USER_VA_END: usize = 1 << 38;
-
-    let mut start = ptr as usize;
-    // 检查是否上溢
-    let end = start.checked_add(len)?;
-    if end > USER_VA_END {
-        return None;
-    }
-
+    let (mut start_va, end_va) = checked_user_va_range(ptr as usize, len)?;
     let page_table = PageTable::from_token(token);
     let mut v = Vec::new();
-    while start < end {
-        let start_va = VirtAddr::from(start);
-        let mut vpn = start_va.floor();
+    while start_va < end_va {
+        let vpn = start_va.floor();
+        // 可找到对应页且权限正确
         let pte = page_table.translate(vpn)?;
-        // 检查 pte 是否有效且符合权限
-        if !pte.is_valid() {
-            return None;
-        };
-        if write {
-            if !pte.writable() {
-                return None;
-            }
+        let perm_ok = if write {
+            pte.writable()
         } else {
-            if !pte.readable() {
-                return None;
-            }
+            pte.readable()
+        };
+        if !pte.is_valid() || !pte.user_accessible() || !perm_ok {
+            return None;
         }
         let ppn = pte.ppn();
-        vpn.step();
-        let mut end_va: VirtAddr = vpn.into();
-        end_va = end_va.min(VirtAddr::from(end));
-        if end_va.page_offset() == 0 {
+        let mut next_vpn = vpn;
+        next_vpn.step();
+        let page_end: VirtAddr = next_vpn.into();
+        if page_end <= end_va {
             v.push(&mut ppn.get_bytes_array()[start_va.page_offset()..]);
         } else {
             v.push(&mut ppn.get_bytes_array()[start_va.page_offset()..end_va.page_offset()]);
-        }
-        start = end_va.into();
+        };
+        start_va = page_end;
     }
     Some(v)
 }

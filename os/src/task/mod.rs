@@ -176,12 +176,14 @@ impl TaskManager {
             .unwrap_or(&0)
             .clone()
     }
+
     /// 给当前任务映射虚拟内存，出错则返回 false
     fn mmap_current(&self, start: usize, len: usize, perm: MapPermission) -> bool {
         let mut inner = self.inner.exclusive_access();
         let current = inner.current_task;
         inner.tasks[current].mmap(start, len, perm)
     }
+
     /// 取消当前任务的内存映射，出错则返回 false
     fn munmap_current(&self, start: usize, len: usize) -> bool {
         let mut inner = self.inner.exclusive_access();

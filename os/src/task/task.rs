@@ -2,7 +2,8 @@
 use super::TaskContext;
 use crate::config::TRAP_CONTEXT_BASE;
 use crate::mm::{
-    kernel_stack_position, MapPermission, MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE,
+    checked_user_va_range, kernel_stack_position, MapPermission, MemorySet, PhysPageNum, VirtAddr,
+    KERNEL_SPACE,
 };
 use crate::trap::{trap_handler, TrapContext};
 use alloc::collections::BTreeMap;
@@ -103,13 +104,18 @@ impl TaskControlBlock {
     }
     /// 映射失败则返回 false
     pub fn mmap(&mut self, start: usize, len: usize, perm: MapPermission) -> bool {
+        let Some((start_va, end_va)) = checked_user_va_range(start, len) else {
+            return false;
+        };
         self.memory_set
-            .insert_framed_area_safe(start.into(), (start + len).into(), perm)
+            .insert_framed_area_safe(start_va, end_va, perm)
     }
     /// 取消映射失败则返回 false
     pub fn munmap(&mut self, start: usize, len: usize) -> bool {
-        self.memory_set
-            .delete_framed_user_area(start.into(), (start + len).into())
+        let Some((start_va, end_va)) = checked_user_va_range(start, len) else {
+            return false;
+        };
+        self.memory_set.delete_framed_user_area(start_va, end_va)
     }
 }
 
