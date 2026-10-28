@@ -62,6 +62,10 @@ impl PageTableEntry {
     pub fn executable(&self) -> bool {
         (self.flags() & PTEFlags::X) != PTEFlags::empty()
     }
+    /// The page pointered by page table entry is user accessible?
+    pub fn user_accessible(&self) -> bool {
+        (self.flags() & PTEFlags::U) != PTEFlags::empty()
+    }
 }
 
 /// page table structure
@@ -181,6 +185,63 @@ pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&
         start = end_va.into();
     }
     v
+}
+
+/// Safe version of `translated_byte_buffer`, check permission of PTE
+pub fn translated_byte_buffer_safe(
+    token: usize,
+    ptr: *const u8,
+    len: usize,
+    write: bool,
+) -> Option<Vec<&'static mut [u8]>> {
+    let page_table = PageTable::from_token(token);
+    let mut start = ptr as usize;
+    let end = start.checked_add(len)?;
+    let mut v = Vec::new();
+    while start < end {
+        let start_va = VirtAddr::from(start);
+        let mut vpn = start_va.floor();
+        let pte = page_table.translate(vpn)?;
+        // check PTE permission
+        let perm_ok = if write {
+            pte.writable()
+        } else {
+            pte.readable()
+        };
+        if !pte.is_valid() || !pte.user_accessible() || !perm_ok {
+            return None;
+        }
+        let ppn = pte.ppn();
+        vpn.step();
+        let mut end_va: VirtAddr = vpn.into();
+        end_va = end_va.min(VirtAddr::from(end));
+        if end_va.page_offset() == 0 {
+            v.push(&mut ppn.get_bytes_array()[start_va.page_offset()..]);
+        } else {
+            v.push(&mut ppn.get_bytes_array()[start_va.page_offset()..end_va.page_offset()]);
+        }
+        start = end_va.into();
+    }
+    Some(v)
+}
+
+/// Copy a reference of T to user space, process correctly when size of T > 1
+pub fn copy_to_user<T>(token: usize, ptr: *mut T, src: &T) -> bool {
+    let n = core::mem::size_of::<T>();
+    if n == 0 {
+        return true;
+    }
+    let Some(buffers) = translated_byte_buffer_safe(token, ptr as *const u8, n, true) else {
+        return false;
+    };
+    let src_bytes = unsafe { core::slice::from_raw_parts(src as *const T as *const u8, n) };
+    let mut off = 0;
+    for buf in buffers {
+        let len = buf.len();
+        buf.copy_from_slice(&src_bytes[off..off + len]);
+        off += len;
+    }
+    true
 }
 
 /// Translate&Copy a ptr[u8] array end with `\0` to a `String` Vec through page table
