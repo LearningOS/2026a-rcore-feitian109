@@ -3,8 +3,9 @@
 use alloc::sync::Arc;
 
 use crate::{
+    config::PAGE_SIZE,
     fs::{open_file, OpenFlags},
-    mm::{copy_to_user, translated_refmut, translated_str},
+    mm::{copy_to_user, translated_refmut, translated_str, MapPermission, VirtAddr},
     task::{
         add_task, current_task, current_user_token, exit_current_and_run_next,
         suspend_current_and_run_next,
@@ -110,36 +111,64 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
 /// YOUR JOB: get time with second and microsecond
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
-pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
+pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
     trace!("kernel:pid[{}] sys_get_time", current_task().unwrap().pid.0);
     let us = get_time_us();
-    let ts = TimeVal {
+    let src = TimeVal {
         sec: us / 1_000_000,
         usec: us % 1_000_000,
     };
-    if copy_to_user(current_user_token(), _ts, &ts) {
-        return 0;
+    if copy_to_user(current_user_token(), ts, &src) {
+        0
     } else {
         -1
     }
 }
 
 /// YOUR JOB: Implement mmap.
-pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_mmap NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+pub fn sys_mmap(start: usize, len: usize, port: usize) -> isize {
+    trace!("kernel:pid[{}] sys_mmap", current_task().unwrap().pid.0);
+    if start % PAGE_SIZE != 0 || !(1..=0x7).contains(&port) {
+        return -1;
+    }
+    let mut perm = MapPermission::U;
+    if port & 0b1 != 0 {
+        perm |= MapPermission::R;
+    }
+    if port & 0b10 != 0 {
+        perm |= MapPermission::W;
+    }
+    if port & 0b100 != 0 {
+        perm |= MapPermission::X;
+    }
+    if current_task()
+        .unwrap()
+        .inner_exclusive_access()
+        .memory_set
+        .insert_framed_area_safe(VirtAddr(start), VirtAddr(start + len), perm)
+    {
+        0
+    } else {
+        -1
+    }
 }
 
 /// YOUR JOB: Implement munmap.
-pub fn sys_munmap(_start: usize, _len: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_munmap NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+pub fn sys_munmap(start: usize, len: usize) -> isize {
+    trace!("kernel:pid[{}] sys_munmap", current_task().unwrap().pid.0);
+    if start % PAGE_SIZE != 0 {
+        return -1;
+    }
+    if current_task()
+        .unwrap()
+        .inner_exclusive_access()
+        .memory_set
+        .remove_user_area(VirtAddr(start).floor(), VirtAddr(start + len).ceil())
+    {
+        0
+    } else {
+        -1
+    }
 }
 
 /// change data segment size

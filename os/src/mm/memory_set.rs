@@ -4,6 +4,7 @@ use super::{PTEFlags, PageTable, PageTableEntry};
 use super::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
 use super::{StepByOne, VPNRange};
 use crate::config::{MEMORY_END, MMIO, PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT_BASE, USER_STACK_SIZE};
+use crate::mm::frame_allocator::remaining_frames;
 use crate::sync::UPSafeCell;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
@@ -66,6 +67,30 @@ impl MemorySet {
             None,
         );
     }
+    /// Safe version of `insert_framed_area`, check possible conflicts,
+    /// and whether frames are enough
+    pub fn insert_framed_area_safe(
+        &mut self,
+        start_va: VirtAddr,
+        end_va: VirtAddr,
+        permission: MapPermission,
+    ) -> bool {
+        let start_vpn = start_va.floor();
+        let end_vpn = end_va.ceil();
+        // check conflict
+        if self.areas.iter().any(|area| {
+            let range = area.vpn_range;
+            range.get_start() < end_vpn && start_vpn < range.get_end()
+        }) {
+            return false;
+        }
+        // enough frames
+        if end_va.0 - start_va.0 > remaining_frames() {
+            return false;
+        }
+        self.insert_framed_area(start_va, end_va, permission);
+        true
+    }
     /// remove a area
     pub fn remove_area_with_start_vpn(&mut self, start_vpn: VirtPageNum) {
         if let Some((idx, area)) = self
@@ -76,6 +101,22 @@ impl MemorySet {
         {
             area.unmap(&mut self.page_table);
             self.areas.remove(idx);
+        }
+    }
+    /// remove a user area
+    pub fn remove_user_area(&mut self, start_vpn: VirtPageNum, end_vpn: VirtPageNum) -> bool {
+        if let Some((idx, area)) = self.areas.iter_mut().enumerate().find(|(_, area)| {
+            let range = area.vpn_range;
+            // precise match
+            range.get_start() == start_vpn
+                && range.get_end() == end_vpn
+                && area.map_perm.contains(MapPermission::U)
+        }) {
+            area.unmap(&mut self.page_table);
+            self.areas.remove(idx);
+            true
+        } else {
+            false
         }
     }
     /// Add a new MapArea into this MemorySet.
