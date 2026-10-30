@@ -5,6 +5,7 @@ use super::{
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::convert::TryInto;
 use spin::{Mutex, MutexGuard};
 /// Virtual filesystem layer over easy-fs
 pub struct Inode {
@@ -182,5 +183,18 @@ impl Inode {
             }
         });
         block_cache_sync_all();
+    }
+    /// get inode id
+    pub fn get_inode_id(&self) -> u32 {
+        let fs = self.fs.lock();
+        fs.get_disk_inode_id(self.block_id.try_into().unwrap(), self.block_offset)
+    }
+    /// return type of DiskInode: `(is_dir: bool, is_file: bool)`
+    pub fn is_dir_file(&self) -> (bool, bool) {
+        self.read_disk_inode(|disk_inode| (disk_inode.is_dir(), disk_inode.is_file()))
+    }
+    /// return hard link number of disk inode
+    pub fn get_nlink(&self) -> u32 {
+        self.read_disk_inode(|disk_inode| disk_inode.nlink)
     }
 }
