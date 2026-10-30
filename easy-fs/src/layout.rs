@@ -236,6 +236,13 @@ impl DiskInode {
                 }
             });
     }
+    // Decrease the size and return blocks that should be deallocated
+    pub fn decrease_size(&mut self, new_size: u32, _block_device: &Arc<dyn BlockDevice>) -> Vec<u32> {
+        self.size = new_size;
+        // TODO: find blocks
+        // 懒得实现了
+        Vec::new()
+    }
 
     /// Clear size to zero and return blocks that should be deallocated.
     /// We will clear the block contents to zero later.

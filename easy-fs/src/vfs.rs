@@ -5,7 +5,6 @@ use super::{
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::convert::TryInto;
 use spin::{Mutex, MutexGuard};
 /// Virtual filesystem layer over easy-fs
 pub struct Inode {
@@ -91,6 +90,21 @@ impl Inode {
         }
         disk_inode.increase_size(new_size, v, &self.block_device);
     }
+    /// Decrease the size of a disk inode
+    fn decrease_size(
+        &self,
+        new_size: u32,
+        disk_inode: &mut DiskInode,
+        fs: &mut MutexGuard<EasyFileSystem>,
+    ) {
+        if new_size > disk_inode.size {
+            return;
+        }
+        let dealloc = disk_inode.decrease_size(new_size, &self.block_device);
+        for block in dealloc {
+            fs.dealloc_data(block);
+        }
+    }
     /// Create a new dir entry under current inode
     fn create_dir_entry(&self, name: &str, inode_id: u32, fs: &mut MutexGuard<EasyFileSystem>) {
         // assert it is a directory
@@ -110,11 +124,52 @@ impl Inode {
             );
         });
     }
+    /// Delete a dir entry under current inode, return false when failed
+    fn delete_dir_entry(&self, name: &str, fs: &mut MutexGuard<EasyFileSystem>) {
+        // assert it is a directory
+        assert!(self.read_disk_inode(|root_inode| root_inode.is_dir()));
+        self.modify_disk_inode(|root_inode| {
+            let file_count = (root_inode.size as usize) / DIRENT_SZ;
+            let mut dirent = DirEntry::empty();
+            // find target dir entry
+            let Some(idx) = (0..file_count).find(|i| {
+                assert_eq!(
+                    root_inode.read_at(DIRENT_SZ * i, dirent.as_bytes_mut(), &self.block_device),
+                    DIRENT_SZ
+                );
+                dirent.name() == name
+            }) else {
+                return;
+            };
+            // if target is not the last entry, do swap
+            if idx != file_count - 1 {
+                // find last dir entry
+                assert_eq!(
+                    root_inode.read_at(
+                        DIRENT_SZ * (file_count - 1),
+                        dirent.as_bytes_mut(),
+                        &self.block_device
+                    ),
+                    DIRENT_SZ
+                );
+                root_inode.write_at(DIRENT_SZ * idx, dirent.as_bytes(), &self.block_device);
+            }
+            // decrease size
+            let new_size = (file_count - 1) * DIRENT_SZ;
+            self.decrease_size(new_size as u32, root_inode, fs);
+        });
+    }
     /// Link a name under current directory by inode_id
     pub fn link(&self, name: &str, inode_id: u32) {
         let mut fs = self.fs.lock();
         self.create_dir_entry(name, inode_id, &mut fs);
         // remember to write back
+        block_cache_sync_all();
+    }
+    /// Unlink a name under current directory
+    pub fn unlink(&self, name: &str) {
+        let mut fs = self.fs.lock();
+        self.delete_dir_entry(name, &mut fs);
         block_cache_sync_all();
     }
     /// Create inode under current inode by name
@@ -197,18 +252,36 @@ impl Inode {
         });
         block_cache_sync_all();
     }
+    /// Clear and deallocate self
+    pub fn dealloc(&self) {
+        self.clear();
+        let mut fs = self.fs.lock();
+        let inode_id = fs.get_disk_inode_id(self.block_id as u32, self.block_offset);
+        fs.dealloc_inode(inode_id);
+        block_cache_sync_all();
+    }
     /// Get inode id
     pub fn get_inode_id(&self) -> u32 {
         let fs = self.fs.lock();
-        fs.get_disk_inode_id(self.block_id.try_into().unwrap(), self.block_offset)
+        fs.get_disk_inode_id(self.block_id as u32, self.block_offset)
     }
     /// Return type of DiskInode: `(is_dir: bool, is_file: bool)`
     pub fn is_dir_file(&self) -> (bool, bool) {
         self.read_disk_inode(|disk_inode| (disk_inode.is_dir(), disk_inode.is_file()))
     }
-    /// Increase link number of disk inode
-    pub fn increase_nlink(&self) {
-        self.modify_disk_inode(|disk_inode| disk_inode.nlink += 1);
+    /// Increase link number of disk inode and return
+    pub fn increase_nlink(&self) -> u32 {
+        self.modify_disk_inode(|disk_inode| {
+            disk_inode.nlink += 1;
+            disk_inode.nlink
+        })
+    }
+    /// Decrease link number of disk inode and return
+    pub fn decrease_nlink(&self) -> u32 {
+        self.modify_disk_inode(|disk_inode| {
+            disk_inode.nlink -= 1;
+            disk_inode.nlink
+        })
     }
     /// Return hard link number of disk inode
     pub fn get_nlink(&self) -> u32 {

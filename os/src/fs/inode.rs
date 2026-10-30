@@ -163,6 +163,20 @@ pub fn link_file(old_name: &str, new_name: &str) -> bool {
     }
 }
 
+/// Delete a hard link, return `false` when failed
+/// when number of link is 0, will delete file from disk
+pub fn unlink_file(name: &str) -> bool {
+    if let Some(inode) = ROOT_INODE.find(name) {
+        ROOT_INODE.unlink(name);
+        if inode.decrease_nlink() == 0 {
+            inode.dealloc();
+        };
+        true
+    } else {
+        false
+    }
+}
+
 impl File for OSInode {
     fn readable(&self) -> bool {
         self.readable
