@@ -91,6 +91,32 @@ impl Inode {
         }
         disk_inode.increase_size(new_size, v, &self.block_device);
     }
+    /// Create a new dir entry under current inode
+    fn create_dir_entry(&self, name: &str, inode_id: u32, fs: &mut MutexGuard<EasyFileSystem>) {
+        // assert it is a directory
+        assert!(self.read_disk_inode(|root_inode| root_inode.is_dir()));
+        self.modify_disk_inode(|root_inode| {
+            // append file in the dirent
+            let file_count = (root_inode.size as usize) / DIRENT_SZ;
+            let new_size = (file_count + 1) * DIRENT_SZ;
+            // increase size
+            self.increase_size(new_size as u32, root_inode, fs);
+            // write dirent
+            let dirent = DirEntry::new(name, inode_id);
+            root_inode.write_at(
+                file_count * DIRENT_SZ,
+                dirent.as_bytes(),
+                &self.block_device,
+            );
+        });
+    }
+    /// Link a name under current directory by inode_id
+    pub fn link(&self, name: &str, inode_id: u32) {
+        let mut fs = self.fs.lock();
+        self.create_dir_entry(name, inode_id, &mut fs);
+        // remember to write back
+        block_cache_sync_all();
+    }
     /// Create inode under current inode by name
     pub fn create(&self, name: &str) -> Option<Arc<Inode>> {
         let mut fs = self.fs.lock();
@@ -113,20 +139,7 @@ impl Inode {
             .modify(new_inode_block_offset, |new_inode: &mut DiskInode| {
                 new_inode.initialize(DiskInodeType::File);
             });
-        self.modify_disk_inode(|root_inode| {
-            // append file in the dirent
-            let file_count = (root_inode.size as usize) / DIRENT_SZ;
-            let new_size = (file_count + 1) * DIRENT_SZ;
-            // increase size
-            self.increase_size(new_size as u32, root_inode, &mut fs);
-            // write dirent
-            let dirent = DirEntry::new(name, new_inode_id);
-            root_inode.write_at(
-                file_count * DIRENT_SZ,
-                dirent.as_bytes(),
-                &self.block_device,
-            );
-        });
+        self.create_dir_entry(name, new_inode_id, &mut fs);
 
         let (block_id, block_offset) = fs.get_disk_inode_pos(new_inode_id);
         block_cache_sync_all();
@@ -184,16 +197,20 @@ impl Inode {
         });
         block_cache_sync_all();
     }
-    /// get inode id
+    /// Get inode id
     pub fn get_inode_id(&self) -> u32 {
         let fs = self.fs.lock();
         fs.get_disk_inode_id(self.block_id.try_into().unwrap(), self.block_offset)
     }
-    /// return type of DiskInode: `(is_dir: bool, is_file: bool)`
+    /// Return type of DiskInode: `(is_dir: bool, is_file: bool)`
     pub fn is_dir_file(&self) -> (bool, bool) {
         self.read_disk_inode(|disk_inode| (disk_inode.is_dir(), disk_inode.is_file()))
     }
-    /// return hard link number of disk inode
+    /// Increase link number of disk inode
+    pub fn increase_nlink(&self) {
+        self.modify_disk_inode(|disk_inode| disk_inode.nlink += 1);
+    }
+    /// Return hard link number of disk inode
     pub fn get_nlink(&self) -> u32 {
         self.read_disk_inode(|disk_inode| disk_inode.nlink)
     }

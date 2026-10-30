@@ -146,6 +146,23 @@ pub fn open_file(name: &str, flags: OpenFlags) -> Option<Arc<OSInode>> {
     }
 }
 
+/// Create a hard link, return `false` when failed
+/// UB: new_name have linked to an inode
+pub fn link_file(old_name: &str, new_name: &str) -> bool {
+    // can't link self
+    if old_name == new_name {
+        return false;
+    }
+    if let Some(inode) = ROOT_INODE.find(old_name) {
+        let inode_id = inode.get_inode_id();
+        ROOT_INODE.link(new_name, inode_id);
+        inode.increase_nlink();
+        true
+    } else {
+        false
+    }
+}
+
 impl File for OSInode {
     fn readable(&self) -> bool {
         self.readable
