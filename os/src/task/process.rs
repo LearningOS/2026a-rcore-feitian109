@@ -53,6 +53,8 @@ pub struct ProcessControlBlockInner {
     pub is_deadlock_detect: bool,
     /// mutex deadlock detector
     pub mutex_detector: DeadlockDetector,
+    // semaphore deadlock detector
+    pub semaphore_detector: DeadlockDetector,
 }
 
 impl ProcessControlBlockInner {
@@ -125,6 +127,7 @@ impl ProcessControlBlock {
                     condvar_list: Vec::new(),
                     is_deadlock_detect: false,
                     mutex_detector: DeadlockDetector::new(),
+                    semaphore_detector: DeadlockDetector::new(),
                 })
             },
         });
@@ -253,6 +256,7 @@ impl ProcessControlBlock {
                     condvar_list: Vec::new(),
                     is_deadlock_detect: false,
                     mutex_detector: DeadlockDetector::new(),
+                    semaphore_detector: DeadlockDetector::new(),
                 })
             },
         });
